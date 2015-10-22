@@ -1,0 +1,214 @@
+<!doctype html>
+<html>
+<head>
+  <title>1 Number</title>
+  <link rel="stylesheet" type="text/css" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
+  <style>
+    body { margin: 1em }
+    .neg { color: red }
+    .amt { text-align: right }
+  </style>
+  <!--script src="dropzone.js"></script-->
+  <script src="node_modules/comma-separated-values/csv.js"></script>
+  <script src="node_modules/underscore/underscore.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dropbox.js/0.10.2/dropbox.min.js"></script>
+  <script>
+
+  var loaded_files = {};
+  var client = new Dropbox.Client({ key: "7wvedsz0vm4jmqd" });
+  var is_authenticated = false;
+  for (var key in localStorage)
+    if (/^dropbox-auth/.test(key))
+      is_authenticated = true;
+
+  if (is_authenticated) {
+    client.authenticate(function(err, client) {
+      if (err)
+        return console.error(err);
+
+      client.readdir('One-Number', function(err, entries) {
+      if (err)
+        return console.error(err);  // Something went wrong.
+
+    entries = entries.filter(function(filename) {
+      return getFileType(filename);
+    });
+
+      entries.forEach(function(filename) {
+        client.readFile('One-Number/' + filename, function(err, text) {
+          var type = getFileType(filename);
+          if (loaded_files[type])
+            loaded_files[type]++;
+          else
+            loaded_files[type] = 1;
+          var new_records = loadCSV(text, type);
+          records = records.concat(new_records);
+
+          // TODO: use async to only run the report once after they've all loaded
+          report();
+        });
+      });
+    });
+    }); 
+  }
+
+  var records = [];
+  // Dropzone.options.myAwesomeDropzone = {
+  //   init: function() {
+  //     this.on("addedfile", function(file) {
+  //       var reader = new FileReader();
+  //       reader.onload = function(e) {
+  //         var text = reader.result;
+  //         var type = getFileType(file.name);
+  //         records = records.concat(loadCSV(text, type)); // 'Transactions.csv'
+  //         report();
+  //       };
+  //       reader.readAsText(file);
+  //     });
+  //   }
+  // };
+
+
+function report() {
+  records = records.filter(function(r) {
+    return r['Post Date'] > '2015-10';
+  });
+
+  records = _.sortBy(records, function(r) {
+    return -Math.abs(r.Amount);
+  });
+
+  var html = '<div>';
+  html += _.map(loaded_files, function(num, type) {
+    return type + (num > 1 ? ' (' + num + ')' : '');
+  }).join(', ');
+  html += '</div>';
+  html += '<table class="table table-condensed table-striped">';
+  html += '<tr><td class="amt"><b>' + Math.round(sum(records, 'Amount') * 100) / 100 + '</b></td><td><b>Total</b></td><td></td></tr>';
+  records.forEach(function(r) {
+    html += '<tr>' + renderAmountCell(r.Amount) + '<td>' + r.Description + '</td><td>' + r['Post Date'] + '</td></tr>';
+  });
+
+  html += '</table>';
+  document.getElementById('report').innerHTML = html;
+}
+
+function renderAmountCell(amt) {
+  var html = '<td class="amt';
+  if (amt < 0)
+    html += ' neg';
+  html +='">';
+  var whole_dollars = Math.floor(amt);
+  html += whole_dollars + '.' + pad2(Math.round((amt - whole_dollars) * 100));
+  html += '</td>';
+  return html;
+}
+
+function getFileType(filename) {
+  if (/Transactions( \(\d+\))?\.csv/.test(filename))
+    return 'AmEx';
+  else if (/\w+_9667.csv/.test(filename))
+    return 'BofA';
+  else if (/-filename.csv/.test(filename))
+    return 'WestEdge';
+  else
+    console.log('non-matching filename: ' + filename);
+}
+
+function loadCSV(csv_str, type) {
+  if (type != 'WestEdge' && type != 'AmEx' && type != 'BofA')
+    throw new Error('unknown type: ' + type);
+
+  //var csv_str = fs.readFileSync("C:\\Users\\prust\\Downloads\\" + filename, {encoding:'utf8'});
+  
+  if (type == 'WestEdge') {
+    // strip out first double line-break
+    csv_str = csv_str.replace('\n', '');
+  }
+
+  var header;
+  if (type == 'WestEdge' || type == 'BofA')
+    header = true;
+  if (type == 'AmEx')
+    header = ['Post Date', 'Unknown', 'Description', 'Card Name', 'Card Number', 'Unknown3', 'Unkown4', 'Amount', '2', '3', '4', '5', '6', '7', '8', '9'];
+
+  var data = new CSV(csv_str, {header: header}).parse();
+  data.forEach(function(obj) {
+    if (type == 'BofA') {
+      obj['Post Date'] = obj['Posted Date'];
+      obj.Description = obj.Payee;
+    }
+    if (type == 'AmEx')
+      obj['Post Date'] = obj['Post Date'].split(' ')[0];
+    obj['Post Date'] = toISO(obj['Post Date']);
+    obj.Amount = parseAmount(obj.Amount);
+    if (type == 'AmEx')
+      obj.Amount = -obj.Amount;
+
+    //console.log(obj.Amount, obj.Description, obj['Post Date']);
+  });
+  return data;
+}
+
+function sum(records, property) {
+  var total = 0;
+  records.forEach(function(r) {
+    total += r[property];
+  });
+  return total;
+}
+
+// var csv_str = fs.readFileSync("C:\\Users\\prust\\Downloads\\Transactions.csv", {encoding:'utf8'});
+// var data = new CSV(csv_str, {header: ['Post Date', 'Unknown', 'Description', 'Card Name', 'Card Number', 'Unknown3', 'Unkown4', 'Amount', '2', '3', '4', '5', '6', '7', '8', '9']}).parse();
+// data.forEach(function(obj) {
+//   obj['Post Date'] = toISO(obj['Post Date'].split(' ')[0]);
+//   obj.Amount = -parseAmount(obj.Amount);
+//   console.log(obj.Amount, obj.Description, obj['Post Date']);
+// });
+
+function toISO(dt_str) {
+  var parts = dt_str.split('/');
+  parts = parts.map(function(part) {
+    return parseInt(part, 10);
+  });
+  return parts[2] + '-' + pad2(parts[0]) + '-' + pad2(parts[1]);
+}
+
+function pad2(num) {
+  if (num < 10)
+    return '0' + num;
+  else
+    return num;
+}
+
+function parseAmount(amt) {
+  var negative = false;
+  if (amt[0] == '(' && amt[amt.length - 1] == ')') {
+    negative = true;
+    amt = amt.slice(1, -1);
+  }
+  
+  if (amt[0] == '$')
+    amt = amt.slice(1);
+  
+  amt = parseFloat(amt);
+  
+  if (negative)
+    amt = -amt;
+  return amt;
+}
+  </script>
+</head>
+<body>
+  <h3>One Number Finances</h3>
+  <div id="report">
+  </div>
+  <form>
+    <button id="dropbox-signin" type="button" onclick="client.authenticate(function(err, client) { console.log(err, client); });">Dropbox Sign In</button>
+  </form>
+  <script>
+    if (is_authenticated)
+      document.getElementById('dropbox-signin').style.display = 'none';
+  </script>
+</body>
+</html>

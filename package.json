@@ -1,0 +1,6 @@
+{
+	"dependencies": {
+		"comma-separated-values": "3.6.2",
+		"underscore": "1.8.3"
+	}
+}
