@@ -1,19 +1,36 @@
-  var records = [];
-  Dropzone.options.myAwesomeDropzone = {
-    init: function() {
-      this.on("addedfile", function(file) {
-        console.log('file added:', file.name);
-        var reader = new FileReader();
-        reader.onload = function(e) {
-          var text = reader.result;
-          var type = getFileType(file.name);
-          records = records.concat(loadCSV(text, type)); // 'Transactions.csv'
-          report();
-        };
-        reader.readAsText(file);
-      });
-    }
-  };
+var records = [];
+var filedrag = document.getElementById('filedrag');
+filedrag.addEventListener("dragover", FileDragHover, false);
+filedrag.addEventListener("dragleave", FileDragHover, false);
+filedrag.addEventListener("drop", FileSelectHandler, false);
+
+// file drag hover
+function FileDragHover(e) {
+  e.stopPropagation();
+  e.preventDefault();
+  e.target.className = (e.type == "dragover" ? "hover" : "");
+}
+
+function FileSelectHandler(e) {
+  // cancel event and hover styling
+  FileDragHover(e);
+
+  // fetch FileList object
+  var files = e.target.files || e.dataTransfer.files;
+
+  // process all Files
+  _.toArray(files).forEach(function(file) {
+    console.log('file dropped:', file.name, file.type, file.size);
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var text = reader.result;
+      var type = getFileType(file.name);
+      records = records.concat(loadCSV(text, type)); // 'Transactions.csv'
+      report();
+    };
+    reader.readAsText(file);
+  })
+}
 
 var year_sel = document.getElementById('year-sel');
 var month_sel = document.getElementById('month-sel');
@@ -67,14 +84,12 @@ function getFileType(filename) {
   else if (/-filename.csv/.test(filename))
     return 'WestEdge';
   else
-    console.log('non-matching filename: ' + filename);
+    alert('Unable to parse CSV, unrecognized filename pattern: "' + filename + '"');
 }
 
 function loadCSV(csv_str, type) {
   if (type != 'WestEdge' && type != 'AmEx' && type != 'BofA')
     throw new Error('unknown type: ' + type);
-
-  //var csv_str = fs.readFileSync("C:\\Users\\prust\\Downloads\\" + filename, {encoding:'utf8'});
   
   if (type == 'WestEdge') {
     // strip out first double line-break
@@ -99,8 +114,6 @@ function loadCSV(csv_str, type) {
     obj.Amount = parseAmount(obj.Amount);
     if (type == 'AmEx')
       obj.Amount = -obj.Amount;
-
-    //console.log(obj.Amount, obj.Description, obj['Post Date']);
   });
   return data;
 }
@@ -112,14 +125,6 @@ function sum(records, property) {
   });
   return total;
 }
-
-// var csv_str = fs.readFileSync("C:\\Users\\prust\\Downloads\\Transactions.csv", {encoding:'utf8'});
-// var data = new CSV(csv_str, {header: ['Post Date', 'Unknown', 'Description', 'Card Name', 'Card Number', 'Unknown3', 'Unkown4', 'Amount', '2', '3', '4', '5', '6', '7', '8', '9']}).parse();
-// data.forEach(function(obj) {
-//   obj['Post Date'] = toISO(obj['Post Date'].split(' ')[0]);
-//   obj.Amount = -parseAmount(obj.Amount);
-//   console.log(obj.Amount, obj.Description, obj['Post Date']);
-// });
 
 function toISO(dt_str) {
   var parts = dt_str.split('/');
