@@ -11,6 +11,8 @@ function FileDragHover(e) {
   e.target.className = (e.type == "dragover" ? "hover" : "");
 }
 
+// TODO: after a drag-and-drop of file(s), I should display
+// a bootstrap info alert that says "3 files dropped: filename1.csv (Apr 2016: 23 tx, May 2016: 1tx), ..."
 function FileSelectHandler(e) {
   // cancel event and hover styling
   FileDragHover(e);
@@ -19,14 +21,30 @@ function FileSelectHandler(e) {
   var files = e.target.files || e.dataTransfer.files;
 
   // process all Files
+  var num_files_imported = 0, num_files_skipped = 0;
   _.toArray(files).forEach(function(file) {
     console.log('file dropped:', file.name, file.type, file.size);
     var reader = new FileReader();
     reader.onload = function(e) {
       var text = reader.result;
       var type = getFileType(file.name);
-      records = records.concat(loadCSV(text, type)); // 'Transactions.csv'
+      if (type) {
+        var new_records = loadCSV(text, type);
+        var num_dupes = checkForDupes(new_records, records);
+        if (!num_dupes || confirm(num_dupes + ' of the ' + new_records.length + ' records in ' + file.name + ' are potential dupes. Continue importing this file?')) {
+          records = records.concat(new_records);
+          num_files_imported++;
+        }
+        else {
+          num_files_skipped++;
+        }
+      }
+      else {
+        num_files_skipped++;
+      }
       report();
+      if (num_files_skipped + num_files_imported == files.length)
+        alert(num_files_imported + ' CSV files imported');
     };
     reader.readAsText(file);
   })
@@ -79,12 +97,13 @@ function renderAmountCell(amt) {
 function getFileType(filename) {
   if (/Transactions( \(\d+\))?\.csv/.test(filename))
     return 'AmEx';
-  else if (/\w+_9667.csv/.test(filename))
+  else if (/\w+_9667( \(\d+\))?\.csv/.test(filename))
     return 'BofA';
-  else if (/-filename.csv/.test(filename))
+  else if (/-filename( \(\d+\))?\.csv/.test(filename))
     return 'WestEdge';
   else
     alert('Unable to parse CSV, unrecognized filename pattern: "' + filename + '"');
+  return null;
 }
 
 function loadCSV(csv_str, type) {
@@ -116,6 +135,15 @@ function loadCSV(csv_str, type) {
       obj.Amount = -obj.Amount;
   });
   return data;
+}
+
+function checkForDupes(new_records, records) {
+  num_dupes = 0;
+  new_records.forEach(function(r) {
+    if (_.findWhere(records, {Description: r.Description, Amount: r.Amount, 'Post Date': r['Post Date']}))
+      num_dupes++;
+  });
+  return num_dupes;
 }
 
 function sum(records, property) {
