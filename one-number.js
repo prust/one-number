@@ -101,13 +101,15 @@ function getFileType(filename) {
     return 'BofA';
   else if (/-filename( \(\d+\))?\.csv/.test(filename))
     return 'WestEdge';
+  else if (/_CURRENT_VIEW( \(\d+\))?\.CSV/.test(filename))
+    return 'CitiBank';
   else
     alert('Unable to parse CSV, unrecognized filename pattern: "' + filename + '"');
   return null;
 }
 
 function loadCSV(csv_str, type) {
-  if (type != 'WestEdge' && type != 'AmEx' && type != 'BofA')
+  if (type != 'WestEdge' && type != 'AmEx' && type != 'BofA' && type != 'CitiBank')
     throw new Error('unknown type: ' + type);
   
   if (type == 'WestEdge') {
@@ -116,21 +118,30 @@ function loadCSV(csv_str, type) {
   }
 
   var header;
-  if (type == 'WestEdge' || type == 'BofA')
+  if (type == 'WestEdge' || type == 'BofA' || type == 'CitiBank')
     header = true;
   if (type == 'AmEx')
     header = ['Post Date', 'Unknown', 'Description', 'Card Name', 'Card Number', 'Unknown3', 'Unkown4', 'Amount', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-  var data = new CSV(csv_str, {header: header}).parse();
+  var data = new CSV(csv_str, {header: header, cast: false}).parse();
   data.forEach(function(obj) {
     if (type == 'BofA') {
       obj['Post Date'] = obj['Posted Date'];
       obj.Description = obj.Payee;
     }
+    if (type == 'CitiBank') {
+      obj.Amount = parseAmount(obj.Credit);
+      obj.Amount -= parseAmount(obj.Debit);
+      obj['Post Date'] = obj.Date;
+    }
+    else {
+      obj.Amount = parseAmount(obj.Amount);
+    }
+
     if (type == 'AmEx')
       obj['Post Date'] = obj['Post Date'].split(' ')[0];
     obj['Post Date'] = toISO(obj['Post Date']);
-    obj.Amount = parseAmount(obj.Amount);
+    
     if (type == 'AmEx')
       obj.Amount = -obj.Amount;
   });
@@ -170,6 +181,9 @@ function pad2(num) {
 }
 
 function parseAmount(amt) {
+  if (amt.trim().length == 0)
+    return 0;
+
   var negative = false;
   if (amt[0] == '(' && amt[amt.length - 1] == ')') {
     negative = true;
@@ -178,7 +192,10 @@ function parseAmount(amt) {
   
   if (amt[0] == '$')
     amt = amt.slice(1);
-  
+
+  // strip out any commas in the amount
+  amt = amt.replace(',', '');
+
   amt = parseFloat(amt);
   
   if (negative)
