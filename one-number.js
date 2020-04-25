@@ -99,9 +99,13 @@ function getFileType(filename) {
     return 'AmEx';
   else if (/\w+_9667( \(\d+\))?\.csv/.test(filename))
     return 'BofA';
-  else if (/-filename( \(\d+\))?\.csv/.test(filename))
+  else if (/filename( \(\d+\))?\.csv/.test(filename))
     return 'WestEdge';
   else if (/_CURRENT_VIEW( \(\d+\))?\.CSV/.test(filename))
+    return 'CitiBank';
+  else if (/Since \w+ \d\d, \d\d\d\d( \(\d+\))?\.CSV/i.test(filename))
+    return 'CitiBank';
+  else if (/Statement closed \w+ \d\d, \d\d\d\d( \(\d+\))?\.CSV/i.test(filename))
     return 'CitiBank';
   else
     alert('Unable to parse CSV, unrecognized filename pattern: "' + filename + '"');
@@ -130,7 +134,7 @@ function loadCSV(csv_str, type) {
       obj.Description = obj.Payee;
     }
     if (type == 'CitiBank') {
-      obj.Amount = parseAmount(obj.Credit);
+      obj.Amount = -parseAmount(obj.Credit);
       obj.Amount -= parseAmount(obj.Debit);
       obj['Post Date'] = obj.Date;
     }
