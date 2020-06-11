@@ -4,6 +4,36 @@ filedrag.addEventListener("dragover", FileDragHover, false);
 filedrag.addEventListener("dragleave", FileDragHover, false);
 filedrag.addEventListener("drop", FileSelectHandler, false);
 
+loadData();
+
+async function loadData() {
+  let res = await fetch('/transactions');
+  let new_records = await res.json();
+  records = records.concat(new_records);
+  report();
+
+  res = await fetch('/splits');
+  let splits = await res.json();
+  return;
+}
+
+async function postTransactions(transactions) {
+  for (let trans of transactions)
+    await postTransaction(trans);
+}
+
+async function postTransaction(trans) {
+  let res = await fetch('/transaction', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(trans)
+  });
+  
+  if (res.status != 200)
+    throw new Error(`HTTP Error ${res.status}`);
+  return res;
+}
+
 // file drag hover
 function FileDragHover(e) {
   e.stopPropagation();
@@ -38,6 +68,7 @@ function FileSelectHandler(e) {
         else {
           num_files_skipped++;
         }
+        postTransactions(new_records);
       }
       else {
         num_files_skipped++;
@@ -66,17 +97,17 @@ function report() {
   var next_month_iso = next_month_yr + '-' + pad2(next_month);
 
   var filtered_records = records.filter(function(r) {
-    return r['Post Date'] > filter_month_iso && r['Post Date'] < next_month_iso;
+    return r.post_date > filter_month_iso && r.post_date < next_month_iso;
   });
 
   filtered_records = _.sortBy(filtered_records, function(r) {
-    return -Math.abs(r.Amount);
+    return -Math.abs(r.amount);
   });
 
   var html = '<table class="table table-condensed table-striped">';
-  html += '<tr><td class="amt"><b>' + Math.round(sum(filtered_records, 'Amount') * 100) / 100 + '</b></td><td><b>Total</b></td><td></td></tr>';
+  html += '<tr><td class="amt"><b>' + Math.round(sum(filtered_records, 'amount') * 100) / 100 + '</b></td><td><b>Total</b></td><td></td></tr>';
   filtered_records.forEach(function(r) {
-    html += '<tr>' + renderAmountCell(r.Amount) + '<td>' + r.Description + '</td><td>' + r['Post Date'] + '</td></tr>';
+    html += '<tr>' + renderAmountCell(r.amount) + '<td>' + r.description + '</td><td>' + r.post_date + '</td></tr>';
   });
 
   html += '</table>';
@@ -100,6 +131,8 @@ function getFileType(filename) {
   else if (/\w+_9667( \(\d+\))?\.csv/.test(filename))
     return 'BofA';
   else if (/filename( \(\d+\))?\.csv/.test(filename))
+    return 'WestEdge';
+  else if (/filename-\d+\.csv/.test(filename))
     return 'WestEdge';
   else if (/_CURRENT_VIEW( \(\d+\))?\.CSV/.test(filename))
     return 'CitiBank';
@@ -130,24 +163,33 @@ function loadCSV(csv_str, type) {
   var data = new CSV(csv_str, {header: header, cast: false}).parse();
   data.forEach(function(obj) {
     if (type == 'BofA') {
-      obj['Post Date'] = obj['Posted Date'];
-      obj.Description = obj.Payee;
+      obj.amount = obj.Amount;
+      obj.post_date = obj['Posted Date'];
+      obj.description = obj.Payee;
     }
     if (type == 'CitiBank') {
-      obj.Amount = -parseAmount(obj.Credit);
-      obj.Amount -= parseAmount(obj.Debit);
-      obj['Post Date'] = obj.Date;
+      obj.amount = -parseAmount(obj.Credit);
+      obj.amount -= parseAmount(obj.Debit);
+      obj.post_date = obj.Date;
+      obj.description = obj.Description;
     }
     else {
-      obj.Amount = parseAmount(obj.Amount);
+      obj.amount = parseAmount(obj.Amount);
+      obj.post_date = obj['Post Date'];
+      obj.description = obj.Description;
     }
 
+    // TODO: default categorizations
+    obj.splits = [];
+
+    // finessing of properties
     if (type == 'AmEx')
-      obj['Post Date'] = obj['Post Date'].split(' ')[0];
-    obj['Post Date'] = toISO(obj['Post Date']);
+      obj.post_date = obj.post_date.split(' ')[0];
+    
+    obj.post_date = toISO(obj.post_date);
     
     if (type == 'AmEx')
-      obj.Amount = -obj.Amount;
+      obj.amount = -obj.amount;
   });
   return data;
 }
@@ -155,7 +197,7 @@ function loadCSV(csv_str, type) {
 function checkForDupes(new_records, records) {
   num_dupes = 0;
   new_records.forEach(function(r) {
-    if (_.findWhere(records, {Description: r.Description, Amount: r.Amount, 'Post Date': r['Post Date']}))
+    if (_.findWhere(records, {description: r.description, amount: r.amount, post_date: r.post_date}))
       num_dupes++;
   });
   return num_dupes;
