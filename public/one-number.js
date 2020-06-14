@@ -1,67 +1,112 @@
-var filedrag = document.getElementById('filedrag');
+let filedrag = document.getElementById('filedrag');
 filedrag.addEventListener("dragover", FileDragHover, false);
 filedrag.addEventListener("dragleave", FileDragHover, false);
 filedrag.addEventListener("drop", FileSelectHandler, false);
 
-var year_sel = document.getElementById('year-sel');
-var month_sel = document.getElementById('month-sel');
+let year_sel = document.getElementById('year-sel');
+let month_sel = document.getElementById('month-sel');
 year_sel.value = new Date().getFullYear();
 month_sel.value = pad2(new Date().getMonth() + 1);
 year_sel.addEventListener('change', loadData);
 month_sel.addEventListener('change', loadData);
 
-var report_div = document.getElementById('report');
+let loaded_months = [];
+
+let rule_lookup = {};
+let report_div = document.getElementById('report');
+
+// <select> change handler
 report_div.addEventListener('change', async function(evt) {
-  var el = evt.target;
-  if (el.tagName == 'SELECT') {
-    if (el.value == '_new') {
-      let new_cat_name = prompt('New Category Name:');
-      if (new_cat_name) {
-        let new_cat = await postEntity({name: new_cat_name}, '/categories');
-        categories.push(new_cat);
-        
-        // update the options on all SELECTs on the page, while retaining their value
-        for (let sel of document.querySelectorAll('SELECT')) {
-          let val = sel.value;
-          sel.innerHTML = getCategoryOptions();
-          if (val)
-            sel.value = val;
-        }
-        
-        el.value = new_cat.id;
-      }
-      else {
-        el.value = '';
-      }
+  let el = evt.target;
+  if (el.tagName != 'SELECT')
+    return;
+
+  // create a new category & add it to all SELECTs
+  let category_id = el.value;
+  if (category_id == '_new') {
+    let new_cat_name = prompt('New Category Name:');
+    if (new_cat_name) {
+      let new_cat = await postEntity({name: new_cat_name}, '/categories');
+      category_id = new_cat.id;
+      categories.push(new_cat);
+      
+      // update the options on all SELECTs on the page, while retaining their value
+      for (let sel of document.querySelectorAll('select.billing-cat')) {
+        let val = sel.value;
+        sel.innerHTML = getCategoryOptions();
+        if (val)
+          sel.value = val;
+      }        
     }
+    else {
+      category_id = null;
+    }
+  }
+  
+  if (category_id)
+    category_id = parseInt(category_id);
 
-    // update transaction in the DB
-    let trans_id = parseInt(el.getAttribute('data-trans-id'));
-    let trans = _.findWhere(transactions, {id: trans_id});
+  // update transaction in the DB
+  let trans_id = parseInt(el.getAttribute('data-trans-id'));
+  if (isNaN(trans_id)) {
+    console.log(el);
+    throw new Error('NaN data-trans-id: ' + el.innerHTML);
+  }
+  let trans = _.findWhere(transactions, {id: trans_id});
 
-    trans.splits = [];
-    let category_id = el.value ? parseInt(el.value) : null;
-    if (category_id)
-      trans.splits.push({category_id: category_id, amount: trans.amount});
+  updateTransCategory(trans, category_id);
 
-    postEntity(trans, '/transactions');
+  // if there isn't a rule, create one
+  if (category_id && !rule_lookup[trans.description]) {
+    let rule = {description: trans.description, category_id: category_id};
+
+    // update all other transactions in memory that match the rule & aren't yet categorized
+    for (let t of transactions)
+      if (t.description == rule.description)
+        applyRule(t, rule);
+
+    rule = await postEntity(rule, '/rules');
+    rules.push(rule);
+    rule_lookup[rule.description] = rule;
   }
 });
+
+function applyRule(trans, rule) {
+  if (!trans.splits || !trans.splits.length)
+    updateTransCategory(trans, rule.category_id);
+}
+
+function updateTransCategory(trans, category_id) {
+  trans.splits = [];
+  if (category_id)
+    trans.splits.push({category_id: category_id, amount: trans.amount});
+
+  postEntity(trans, '/transactions');
+  let sel = document.querySelector(`select[data-trans-id="${trans.id}"]`);
+  if (sel)
+    sel.value = category_id;
+}
 
 loadData();
 
 async function loadData() {
   let start_month = `${year_sel.value}-${month_sel.value}`;
-  let end_month = getNextMonthISO(year_sel.value, month_sel.value);
+  let end_month = getNextMonthISO(start_month);
 
-  // every time we switch months, we need to load/update the relevant categories/transactions
-  let entities_to_load = ['category_amounts', 'transactions'];
+  await loadMonth(start_month, end_month);
+  report();
+}
 
-  // on the initial load, we also need to load the rules & categories
+async function loadMonth(start_month, end_month) {
+  // on the initial load, we also need to load the rules & categories (1st, b/c this helps w/ the others)
+  let entities_to_load = [];
   if (!window.rules)
     entities_to_load.push('rules');
   if (!window.categories)
     entities_to_load.push('categories');
+
+  // every time we switch months, we need to load/update the relevant categories/transactions
+  entities_to_load = entities_to_load.concat(['category_amounts', 'transactions']);
 
   for (let entity of entities_to_load) {
     let url = `/${entity}`;
@@ -70,6 +115,12 @@ async function loadData() {
 
     let res = await fetch(url);
     let records = await res.json();
+
+    if (entity == 'transactions') {
+      for (let trans of records)
+        if (rule_lookup[trans.description])
+          applyRule(trans, rule_lookup[trans.description]);
+    }
 
     // transactions are "sticky" - we keep transactions from other date-ranges in memory
     // to aid in dupe-detections & data loading from CSV files that cover multiple months
@@ -81,15 +132,23 @@ async function loadData() {
     }
     else {
       window[entity] = records;
+      
+      // populate rule lookup
+      if (entity == 'rules') {
+        for (let rule of rules)
+          rule_lookup[rule.description] = rule;
+      }
     }
   }
 
-  report();
+  loaded_months.push({start_month: start_month, end_month: end_month});
 }
 
 async function postTransactions(transactions) {
-  for (let trans of transactions)
-    await postEntity(trans, '/transactions');
+  for (let trans of transactions) {
+    let res = await postEntity(trans, '/transactions');
+    trans.id = res.id;
+  }
 }
 
 async function postEntity(obj, path) {
@@ -118,23 +177,31 @@ function FileSelectHandler(e) {
   FileDragHover(e);
 
   // fetch FileList object
-  var files = e.target.files || e.dataTransfer.files;
+  let files = e.target.files || e.dataTransfer.files;
 
   // process all Files
-  var num_files_imported = 0, num_files_skipped = 0;
+  let num_files_imported = 0, num_files_skipped = 0;
   _.toArray(files).forEach(function(file) {
     console.log('file dropped:', file.name, file.type, file.size);
-    var reader = new FileReader();
-    reader.onload = function(e) {
-      var text = reader.result;
-      var type = getFileType(file.name);
+    let reader = new FileReader();
+    reader.onload = async function(e) {
+      let text = reader.result;
+      let type = getFileType(file.name);
       if (type) {
-        var new_records = loadCSV(text, type);
+        let new_records = loadCSV(text, type);
 
-        var dupes = window.transactions ? getDupes(new_records, transactions) : [];        
+        // JIT pre-load from server all data from relevant month(s)
+        // so we can detect & filter out dupes
+        for (let record of new_records) {
+          let start_month = record.post_date.slice(0, 7);
+          if (!_.findWhere(loaded_months, {start_month: start_month}))
+            await loadMonth(start_month, getNextMonthISO(start_month));
+        }
+
+        let dupes = window.transactions ? getDupes(new_records, transactions) : [];        
         if (dupes.length) {
           if (confirm(`${dupes.length} of the ${new_records.length} transactions in ${file.name} appear to be duplicates of existing transactions. Import remaining ${new_records.length - dupes.length} transactions?`)) {
-            new_records = _.without(new_records, dupes);
+            new_records = _.difference(new_records, dupes);
             for (let dupe of dupes)
               console.log(`Skipped duplicate: ${JSON.stringify(dupe)}`);
           }
@@ -150,9 +217,18 @@ function FileSelectHandler(e) {
           window.transactions = new_records;
           
         console.log(`Imported ${new_records.length} transactions from ${file.name}`);
+
+        // wait for transactions to be posted so report() has trans IDs to include in UI
         if (new_records.length) {
-          postTransactions(new_records);
+          await postTransactions(new_records);
           num_files_imported++;
+          
+          // apply categorization rules to newly-imported transactions
+          // *after* they've been successfully posted to the server
+          // otherwise they're posted twice simultaneously & two records are created
+          for (let trans of new_records)
+            if (rule_lookup[trans.description])
+              applyRule(trans, rule_lookup[trans.description]);
         }
         else {
           num_files_skipped++;
@@ -172,10 +248,10 @@ function FileSelectHandler(e) {
 }
 
 function report() {
-  var filter_month_iso = year_sel.value + '-' + month_sel.value;
-  var next_month_iso = getNextMonthISO(year_sel.value, month_sel.value);
+  let filter_month_iso = year_sel.value + '-' + month_sel.value;
+  let next_month_iso = getNextMonthISO(filter_month_iso);
 
-  var filtered_records = transactions.filter(function(r) {
+  let filtered_records = transactions.filter(function(r) {
     return r.post_date > filter_month_iso && r.post_date < next_month_iso;
   });
 
@@ -183,21 +259,24 @@ function report() {
     return -Math.abs(r.amount);
   });
 
-  var html = '<table class="table table-condensed table-striped">';
+  let html = '<table class="table table-condensed table-striped">';
   html += '<tr><td class="amt"><b>' + Math.round(sum(filtered_records, 'amount') * 100) / 100 + '</b></td><td><b>Total</b></td><td></td><td></td></tr>';
   filtered_records.forEach(function(r) {
     let split = r.splits[0] || {};
     let cat_opts = getCategoryOptions(split.category_id);
-    html += `<tr>${renderAmountCell(r.amount)}<td>${r.description}</td><td><select data-trans-id="${r.id}">${cat_opts}</select> <button class="btn btn-default btn-xs" disabled>Split</button></td><td>${r.post_date}</td></tr>`;
+    html += `<tr>${renderAmountCell(r.amount)}<td>${r.description}</td><td><select class="billing-cat" data-trans-id="${r.id}">${cat_opts}</select> <button class="btn btn-default btn-xs" disabled>Split</button></td><td>${r.post_date}</td></tr>`;
   });
 
   html += '</table>';
   report_div.innerHTML = html;
 }
 
-function getNextMonthISO(year_val, month_val) {
-  var next_month = parseInt(month_val, 10) + 1;
-  var next_month_yr = parseInt(year_val, 10);
+function getNextMonthISO(prev_month_iso) {
+  let parts = prev_month_iso.split('-');
+  let year_val = parts[0];
+  let month_val = parts[1];
+  let next_month = parseInt(month_val, 10) + 1;
+  let next_month_yr = parseInt(year_val, 10);
   if (next_month == 13) {
     next_month_yr++;
     next_month = 1;
@@ -213,11 +292,11 @@ function getCategoryOptions(selected_cat_id) {
 }
 
 function renderAmountCell(amt) {
-  var html = '<td class="amt';
+  let html = '<td class="amt';
   if (amt < 0)
     html += ' neg';
   html +='">';
-  var whole_dollars = Math.floor(amt);
+  let whole_dollars = Math.floor(amt);
   html += whole_dollars + '.' + pad2(Math.round((amt - whole_dollars) * 100));
   html += '</td>';
   return html;
@@ -252,13 +331,13 @@ function loadCSV(csv_str, type) {
     csv_str = csv_str.replace('\n', '');
   }
 
-  var header;
+  let header;
   if (type == 'WestEdge' || type == 'BofA' || type == 'CitiBank')
     header = true;
   if (type == 'AmEx')
     header = ['Post Date', 'Unknown', 'Description', 'Card Name', 'Card Number', 'Unknown3', 'Unkown4', 'Amount', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-  var data = new CSV(csv_str, {header: header, cast: false}).parse();
+  let data = new CSV(csv_str, {header: header, cast: false}).parse();
   data.forEach(function(obj) {
     if (type == 'BofA') {
       obj.amount = obj.Amount;
@@ -303,7 +382,7 @@ function getDupes(new_records, transactions) {
 }
 
 function sum(records, property) {
-  var total = 0;
+  let total = 0;
   records.forEach(function(r) {
     total += r[property];
   });
@@ -311,7 +390,7 @@ function sum(records, property) {
 }
 
 function toISO(dt_str) {
-  var parts = dt_str.split('/');
+  let parts = dt_str.split('/');
   parts = parts.map(function(part) {
     return parseInt(part, 10);
   });
@@ -329,7 +408,7 @@ function parseAmount(amt) {
   if (amt.trim().length == 0)
     return 0;
 
-  var negative = false;
+  let negative = false;
   if (amt[0] == '(' && amt[amt.length - 1] == ')') {
     negative = true;
     amt = amt.slice(1, -1);

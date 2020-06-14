@@ -75,13 +75,13 @@ app.get('/transactions/:start_month/:end_month', function(req, res) {
 
     convertCentsToDollars(result.rows);
 
-    var id_to_trans = {};
+    let id_to_trans = {};
     for (let trans of result.rows) {
       trans.splits = [];
       id_to_trans[trans.id] = trans;
     }
     
-    let split_sql = `SELECT * FROM split
+    let split_sql = `SELECT split.* FROM split
       INNER JOIN transaction t ON split.trans_id = t.id
       WHERE t.post_date > $1 AND t.post_date < $2`;
     conn.query(split_sql, params, function(err, res_splits) {
