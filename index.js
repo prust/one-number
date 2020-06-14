@@ -32,7 +32,7 @@ let tables = {
   split: [{name: 'id', defn: 'SERIAL PRIMARY KEY'}, {name: 'category_id', defn: 'INTEGER'}, {name: 'amount', defn: 'INTEGER'}, {name: 'trans_id', defn: 'INTEGER'}],
   category: [{name: 'id', defn: 'SERIAL PRIMARY KEY'}, {name: 'name', defn: 'VARCHAR(50)'}, {name: 'num_months', defn: 'INTEGER'}],
   category_amount: [{name: 'id', defn: 'SERIAL PRIMARY KEY'}, {name: 'budget_amount', defn: 'INTEGER'}, {name: 'carryover_amount', defn: 'INTEGER'}, {name: 'start_date', defn: 'CHAR(10)'}],
-  rule: [{name: 'id', defn: 'SERIAL PRIMARY KEY'}, {name: 'payee', defn: 'VARCHAR'}, {name: 'category_id', defn: 'INTEGER'}]
+  rule: [{name: 'id', defn: 'SERIAL PRIMARY KEY'}, {name: 'description', defn: 'VARCHAR'}, {name: 'category_id', defn: 'INTEGER'}]
 };
 
 // getter JSON APIs
@@ -195,12 +195,16 @@ function convertDollarsToCents(row) {
 }
 
 // create DB schema
-async.each(Object.keys(tables), function(table, cb) {
-  let cols = tables[table].map(col => `${col.name} ${col.defn}`);
-  let trans_sql = `CREATE TABLE IF NOT EXISTS ${table} (${cols.join(', ')})`;
-  conn.query(trans_sql, [], cb);
-}, function(err) {
-  app.listen(port, function() {
-    console.log(`Listening on ${port}`);
+conn.query('ALTER TABLE rule RENAME COLUMN payee TO description', [], function(err) {
+  if (err) throw err;
+
+  async.each(Object.keys(tables), function(table, cb) {
+    let cols = tables[table].map(col => `${col.name} ${col.defn}`);
+    let trans_sql = `CREATE TABLE IF NOT EXISTS ${table} (${cols.join(', ')})`;
+    conn.query(trans_sql, [], cb);
+  }, function(err) {
+    app.listen(port, function() {
+      console.log(`Listening on ${port}`);
+    });
   });
 });
