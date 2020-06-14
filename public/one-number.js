@@ -83,8 +83,10 @@ function updateTransCategory(trans, category_id) {
 
   postEntity(trans, '/transactions');
   let sel = document.querySelector(`select[data-trans-id="${trans.id}"]`);
-  if (sel)
+  if (sel) {
     sel.value = category_id;
+    updateCharts();
+  }
 }
 
 loadData();
@@ -269,6 +271,36 @@ function report() {
 
   html += '</table>';
   report_div.innerHTML = html;
+
+  updateCharts();
+}
+
+function updateCharts() {
+  let start_month = `${year_sel.value}-${month_sel.value}`;
+  let end_month = getNextMonthISO(start_month);
+  
+  let totals = {};
+  for (let trans of transactions) {
+    if (trans.post_date > start_month && trans.post_date < end_month) {
+      if (trans.splits && trans.splits.length) {
+        let split = trans.splits[0];
+        totals[split.category_id] = totals[split.category_id] || 0;
+        totals[split.category_id] += split.amount;
+      }
+    }
+  }
+
+  let total_arr = [];
+  for (let category_id in totals) {
+    let category = _.findWhere(categories, {id: parseInt(category_id)});
+    total_arr.push({total: totals[category_id], name: category ? category.name : 'Unknown'});
+  }
+  total_arr = _.sortBy(total_arr, 'total');
+
+  let max = total_arr.length && total_arr[0].total;
+  document.getElementById('charts').innerHTML = '<table>' + total_arr.map(function(total) {
+    return `<tr><td class="tight-col">${total.name}</td>${renderAmountCell(-total.total)}<td><div class="budget" style="width: ${total.total * 100 / max}%"></div></td></tr>`;
+  }).join('') + '</table>';
 }
 
 function getNextMonthISO(prev_month_iso) {

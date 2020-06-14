@@ -24,6 +24,21 @@
       border-style: solid;
       box-shadow: inset 0 3px 4px #888;
     }
+
+    #charts table {
+      width: 100%;
+      margin: 10px 5px;
+    }
+    #charts td { width: 99%; }
+    #charts td.tight-col, #charts td.amt {
+      white-space: nowrap;
+      width: 1%;
+      padding: 2px 5px;
+    }
+    #charts .budget {
+      background-color: #AAAAAA;
+      height: 15px;
+    }
   </style>
   <script src="js/csv.js"></script>
   <script src="js/underscore.js"></script>
@@ -53,6 +68,8 @@
     <option>2022</option>
     <option>2023</option>
   </select>
+  </div>
+  <div id="charts">
   </div>
   <div id="report">
   </div>
