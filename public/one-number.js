@@ -1,37 +1,107 @@
-var records = [];
 var filedrag = document.getElementById('filedrag');
 filedrag.addEventListener("dragover", FileDragHover, false);
 filedrag.addEventListener("dragleave", FileDragHover, false);
 filedrag.addEventListener("drop", FileSelectHandler, false);
 
+var year_sel = document.getElementById('year-sel');
+var month_sel = document.getElementById('month-sel');
+year_sel.value = new Date().getFullYear();
+month_sel.value = pad2(new Date().getMonth() + 1);
+year_sel.addEventListener('change', loadData);
+month_sel.addEventListener('change', loadData);
+
+var report_div = document.getElementById('report');
+report_div.addEventListener('change', async function(evt) {
+  var el = evt.target;
+  if (el.tagName == 'SELECT') {
+    if (el.value == '_new') {
+      let new_cat_name = prompt('New Category Name:');
+      if (new_cat_name) {
+        let new_cat = await postEntity({name: new_cat_name}, '/categories');
+        categories.push(new_cat);
+        
+        // update the options on all SELECTs on the page, while retaining their value
+        for (let sel of document.querySelectorAll('SELECT')) {
+          let val = sel.value;
+          sel.innerHTML = getCategoryOptions();
+          if (val)
+            sel.value = val;
+        }
+        
+        el.value = new_cat.id;
+      }
+      else {
+        el.value = '';
+      }
+    }
+
+    // update transaction in the DB
+    let trans_id = parseInt(el.getAttribute('data-trans-id'));
+    let trans = _.findWhere(transactions, {id: trans_id});
+
+    trans.splits = [];
+    let category_id = el.value ? parseInt(el.value) : null;
+    if (category_id)
+      trans.splits.push({category_id: category_id, amount: trans.amount});
+
+    postEntity(trans, '/transactions');
+  }
+});
+
 loadData();
 
 async function loadData() {
-  let res = await fetch('/transactions');
-  let new_records = await res.json();
-  records = records.concat(new_records);
-  report();
+  let start_month = `${year_sel.value}-${month_sel.value}`;
+  let end_month = getNextMonthISO(year_sel.value, month_sel.value);
 
-  res = await fetch('/splits');
-  let splits = await res.json();
-  return;
+  // every time we switch months, we need to load/update the relevant categories/transactions
+  let entities_to_load = ['category_amounts', 'transactions'];
+
+  // on the initial load, we also need to load the rules & categories
+  if (!window.rules)
+    entities_to_load.push('rules');
+  if (!window.categories)
+    entities_to_load.push('categories');
+
+  for (let entity of entities_to_load) {
+    let url = `/${entity}`;
+    if (entity == 'category_amounts' || entity == 'transactions')
+      url += `/${start_month}/${end_month}`;
+
+    let res = await fetch(url);
+    let records = await res.json();
+
+    // transactions are "sticky" - we keep transactions from other date-ranges in memory
+    // to aid in dupe-detections & data loading from CSV files that cover multiple months
+    // but when loading transactions for a particular month, we do need to *replace* existing transactions from that month
+    if (entity == 'transactions' && window.transactions) {
+      let trans_in_month = transactions.filter(t => t.post_date > start_month && t.post_date < end_month);
+      transactions = _.difference(transactions, trans_in_month);
+      window.transactions = window.transactions.concat(records);
+    }
+    else {
+      window[entity] = records;
+    }
+  }
+
+  report();
 }
 
 async function postTransactions(transactions) {
   for (let trans of transactions)
-    await postTransaction(trans);
+    await postEntity(trans, '/transactions');
 }
 
-async function postTransaction(trans) {
-  let res = await fetch('/transaction', {
+async function postEntity(obj, path) {
+  let res = await fetch(path, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(trans)
+    body: JSON.stringify(obj)
   });
   
   if (res.status != 200)
     throw new Error(`HTTP Error ${res.status}`);
-  return res;
+  return await res.json();
 }
 
 // file drag hover
@@ -60,20 +130,40 @@ function FileSelectHandler(e) {
       var type = getFileType(file.name);
       if (type) {
         var new_records = loadCSV(text, type);
-        var num_dupes = checkForDupes(new_records, records);
-        if (!num_dupes || confirm(num_dupes + ' of the ' + new_records.length + ' records in ' + file.name + ' are potential dupes. Continue importing this file?')) {
-          records = records.concat(new_records);
+
+        var dupes = window.transactions ? getDupes(new_records, transactions) : [];        
+        if (dupes.length) {
+          if (confirm(`${dupes.length} of the ${new_records.length} transactions in ${file.name} appear to be duplicates of existing transactions. Import remaining ${new_records.length - dupes.length} transactions?`)) {
+            new_records = _.without(new_records, dupes);
+            for (let dupe of dupes)
+              console.log(`Skipped duplicate: ${JSON.stringify(dupe)}`);
+          }
+          else {
+            console.log(`User cancelled importing ${file.name} due to apparently duplicate transactions.`);
+            new_records = [];
+          }
+        }
+        
+        if (window.transactions)
+          window.transactions = transactions.concat(new_records);
+        else
+          window.transactions = new_records;
+          
+        console.log(`Imported ${new_records.length} transactions from ${file.name}`);
+        if (new_records.length) {
+          postTransactions(new_records);
           num_files_imported++;
         }
         else {
           num_files_skipped++;
         }
-        postTransactions(new_records);
       }
       else {
         num_files_skipped++;
       }
+
       report();
+
       if (num_files_skipped + num_files_imported == files.length)
         alert(num_files_imported + ' CSV files imported');
     };
@@ -81,22 +171,11 @@ function FileSelectHandler(e) {
   })
 }
 
-var year_sel = document.getElementById('year-sel');
-var month_sel = document.getElementById('month-sel');
-year_sel.addEventListener('change', report);
-month_sel.addEventListener('change', report);
-
 function report() {
   var filter_month_iso = year_sel.value + '-' + month_sel.value;
-  var next_month = parseInt(month_sel.value, 10) + 1;
-  var next_month_yr = parseInt(year_sel.value, 10);
-  if (next_month == 13) {
-    next_month_yr++;
-    next_month = 1;
-  }
-  var next_month_iso = next_month_yr + '-' + pad2(next_month);
+  var next_month_iso = getNextMonthISO(year_sel.value, month_sel.value);
 
-  var filtered_records = records.filter(function(r) {
+  var filtered_records = transactions.filter(function(r) {
     return r.post_date > filter_month_iso && r.post_date < next_month_iso;
   });
 
@@ -105,13 +184,32 @@ function report() {
   });
 
   var html = '<table class="table table-condensed table-striped">';
-  html += '<tr><td class="amt"><b>' + Math.round(sum(filtered_records, 'amount') * 100) / 100 + '</b></td><td><b>Total</b></td><td></td></tr>';
+  html += '<tr><td class="amt"><b>' + Math.round(sum(filtered_records, 'amount') * 100) / 100 + '</b></td><td><b>Total</b></td><td></td><td></td></tr>';
   filtered_records.forEach(function(r) {
-    html += '<tr>' + renderAmountCell(r.amount) + '<td>' + r.description + '</td><td>' + r.post_date + '</td></tr>';
+    let split = r.splits[0] || {};
+    let cat_opts = getCategoryOptions(split.category_id);
+    html += `<tr>${renderAmountCell(r.amount)}<td>${r.description}</td><td><select data-trans-id="${r.id}">${cat_opts}</select> <button class="btn btn-default btn-xs" disabled>Split</button></td><td>${r.post_date}</td></tr>`;
   });
 
   html += '</table>';
-  document.getElementById('report').innerHTML = html;
+  report_div.innerHTML = html;
+}
+
+function getNextMonthISO(year_val, month_val) {
+  var next_month = parseInt(month_val, 10) + 1;
+  var next_month_yr = parseInt(year_val, 10);
+  if (next_month == 13) {
+    next_month_yr++;
+    next_month = 1;
+  }
+  return next_month_yr + '-' + pad2(next_month);
+}
+
+function getCategoryOptions(selected_cat_id) {
+  let cat_opts = categories.map(function(cat) {
+    return `<option value="${cat.id}" ${selected_cat_id == cat.id ? 'selected' : ''}>${cat.name}</option>`;
+  }).join('\n');
+  return `<option></option>${cat_opts}<option value="_new">New Category...</option>`;
 }
 
 function renderAmountCell(amt) {
@@ -194,13 +292,14 @@ function loadCSV(csv_str, type) {
   return data;
 }
 
-function checkForDupes(new_records, records) {
-  num_dupes = 0;
-  new_records.forEach(function(r) {
-    if (_.findWhere(records, {description: r.description, amount: r.amount, post_date: r.post_date}))
-      num_dupes++;
+function getDupes(new_records, transactions) {
+  return new_records.filter(function(r) {
+    return _.findWhere(transactions, {
+      description: r.description,
+      amount: r.amount,
+      post_date: r.post_date
+    });
   });
-  return num_dupes;
 }
 
 function sum(records, property) {
