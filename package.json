@@ -4,6 +4,6 @@
 		"comma-separated-values": "3.6.2",
 		"express": "4.17.1",
 		"pg": "^8.2.1",
-		"underscore": "1.8.3"
+		"underscore": "1.12.1"
 	}
 }
