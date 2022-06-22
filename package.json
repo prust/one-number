@@ -1,6 +1,6 @@
 {
 	"dependencies": {
-		"async": "^3.2.0",
+		"async": "^3.2.2",
 		"comma-separated-values": "3.6.2",
 		"express": "4.17.1",
 		"pg": "^8.2.1",
