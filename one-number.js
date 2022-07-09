@@ -50,14 +50,27 @@ function FileSelectHandler(e) {
   })
 }
 
-var year_sel = document.getElementById('year-sel');
-var month_sel = document.getElementById('month-sel');
-var week_sel = document.getElementById('week-sel');
-year_sel.addEventListener('change', report);
-month_sel.addEventListener('change', report);
-week_sel.addEventListener('change', report);
+let year_sel, month_sel, week_sel, budget_mode_chk;
+let month_budget, week_budget, non_discretionary_expenses, exclude;
+async function startup() {
+  year_sel = document.getElementById('year-sel');
+  month_sel = document.getElementById('month-sel');
+  week_sel = document.getElementById('week-sel');
+  budget_mode_chk = document.getElementById('budget-mode');
+  year_sel.addEventListener('change', report);
+  month_sel.addEventListener('change', report);
+  week_sel.addEventListener('change', report);
+  budget_mode_chk.addEventListener('change', report);
+  
+  ({month_budget, week_budget, non_discretionary_expenses, exclude} = await loadConfig());
+}
+startup();
 
 function report() {
+  let is_budget_mode = budget_mode_chk.checked;
+  if (is_budget_mode && (month_budget == null || week_budget == null))
+    return alert('Budget mode clicked, but config.json is not loaded or does not have budget information');
+
   let week = week_sel.value ? parseInt(week_sel.value) : null;
   let month = parseInt(month_sel.value);
   let year = parseInt(year_sel.value);
@@ -79,12 +92,34 @@ function report() {
     return r['Post Date'] >= dateToISO(start) && r['Post Date'] <= dateToISO(end);
   });
 
+  if (is_budget_mode) {
+    filtered_records = filtered_records.filter(function(r) {
+      for (let desc in non_discretionary_expenses) {
+        if (r.Description.startsWith(desc)) {
+          if (r.Amount != non_discretionary_expenses[desc])
+            console.warn(`Non-discretionary expense "${r.Description}" amount ${r.Amount} != expected ${non_discretionary_expenses[desc]}`);
+          return false;
+        }
+      }
+      for (let desc of exclude) {
+        if (r.Description.startsWith(desc)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
   filtered_records = _.sortBy(filtered_records, function(r) {
     return -Math.abs(r.Amount);
   });
 
-  var html = '<table class="table table-condensed table-striped">';
-  html += '<tr><td class="amt"><b>' + Math.round(sum(filtered_records, 'Amount') * 100) / 100 + '</b></td><td><b>Total</b></td><td></td></tr>';
+  var html = `<table class="table table-condensed table-striped">
+    <tr><td class="amt">
+      <b>${round(sum(filtered_records, 'Amount'))}</b>
+    </td><td>
+      <b>${is_budget_mode ? ` / ${week ? `${week_budget} Week` : `${month_budget} Month`} Budget` : 'Total'}</b>
+    </td><td></td></tr>`;
   filtered_records.forEach(function(r) {
     html += '<tr>' + renderAmountCell(r.Amount) + '<td>' + r.Description + '</td><td>' + r['Post Date'] + '</td></tr>';
   });
@@ -150,6 +185,10 @@ function loadCSV(csv_str, type) {
     if (type == 'BofA') {
       obj['Post Date'] = obj['Posted Date'];
       obj.Description = obj.Payee;
+    }
+    obj.Description = obj.Description.trim();
+    if (type == 'WestEdge') {
+      obj.Description = obj.Description || obj['Transaction Type'];
     }
     if (type == 'CitiBank') {
       obj.Amount = -parseAmount(obj.Credit);
@@ -223,4 +262,30 @@ function parseAmount(amt) {
   if (negative)
     amt = -amt;
   return amt;
+}
+
+async function loadConfig() {
+  let res = await fetch('config.json');
+  let config = await res.json();
+
+  let non_discretionary_total = 0;
+  for (let id in config.non_discretionary_expenses)
+    non_discretionary_total += config.non_discretionary_expenses[id];
+  non_discretionary_total = round(non_discretionary_total);
+  console.log(`Non-Discretionary Total: ${non_discretionary_total}`);
+
+  let expected_monthly_income = 0;
+  for (let income of config.expected_monthly_income)
+    expected_monthly_income += income;
+  
+  let month_budget = Math.round(expected_monthly_income - non_discretionary_total);
+  console.log(`Monthly discretionary budget: ${expected_monthly_income} - ${non_discretionary_total} = ${month_budget}`);
+  let week_budget = Math.round(month_budget / 4.3); // 4.3 wks in a month
+  console.log(`Weekly discretionary budget: ${week_budget}`);
+  return {month_budget: month_budget, week_budget: week_budget, non_discretionary_expenses: config.non_discretionary_expenses, exclude: config.exclude};
+}
+
+// round to 2 decimal places, to deal w/ floating-point imprecisions & dividing by 4.3
+function round(num) {
+  return Math.round(num * 100) / 100;
 }
