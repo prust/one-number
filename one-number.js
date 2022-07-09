@@ -99,8 +99,12 @@ function getFileType(filename) {
     return 'AmEx';
   else if (/\w+_9667( \(\d+\))?\.csv/.test(filename))
     return 'BofA';
-  else if (/filename( \(\d+\))?\.csv/.test(filename))
+  else if (/filename( \(\d+\))?\.csv/.test(filename)) // windows/chrome? duplicate file suffix (1), (2), (3)
     return 'WestEdge';
+  else if (/filename-\d?\.csv/.test(filename)) // macos/safari? duplicate file suffix -1, -2, -3
+    return 'WestEdge';
+  else if (filename == 'Year to date.CSV')
+    return 'CitiBank';
   else if (/_CURRENT_VIEW( \(\d+\))?\.CSV/.test(filename))
     return 'CitiBank';
   else if (/Since \w+ \d\d, \d\d\d\d( \(\d+\))?\.CSV/i.test(filename))
