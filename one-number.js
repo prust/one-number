@@ -52,21 +52,31 @@ function FileSelectHandler(e) {
 
 var year_sel = document.getElementById('year-sel');
 var month_sel = document.getElementById('month-sel');
+var week_sel = document.getElementById('week-sel');
 year_sel.addEventListener('change', report);
 month_sel.addEventListener('change', report);
+week_sel.addEventListener('change', report);
 
 function report() {
-  var filter_month_iso = year_sel.value + '-' + month_sel.value;
-  var next_month = parseInt(month_sel.value, 10) + 1;
-  var next_month_yr = parseInt(year_sel.value, 10);
-  if (next_month == 13) {
-    next_month_yr++;
-    next_month = 1;
+  let week = week_sel.value ? parseInt(week_sel.value) : null;
+  let month = parseInt(month_sel.value);
+  let year = parseInt(year_sel.value);
+
+  let start = new Date(year, month, 1); // start out at the first day of the month
+  let end;
+
+  if (week) { // filter by week
+    start.setDate(start.getDate() + (week-1)*7); // bump date forward based on week # (week 1, week 2, etc)
+    start.setDate(start.getDate() - start.getDay()); // bump back the first day of that wk (Sunday)
+    end = new Date(start);
+    end.setDate(start.getDate() + 6); // +6 gets to the Saturday at the end of the same week
   }
-  var next_month_iso = next_month_yr + '-' + pad2(next_month);
+  else { // filter by month
+    end = new Date(year, month + 1, 0); // month+1 = next month, 0-day is last day of prev month
+  }
 
   var filtered_records = records.filter(function(r) {
-    return r['Post Date'] > filter_month_iso && r['Post Date'] < next_month_iso;
+    return r['Post Date'] >= dateToISO(start) && r['Post Date'] <= dateToISO(end);
   });
 
   filtered_records = _.sortBy(filtered_records, function(r) {
@@ -81,6 +91,10 @@ function report() {
 
   html += '</table>';
   document.getElementById('report').innerHTML = html;
+}
+
+function dateToISO(dt) {
+  return `${dt.getFullYear()}-${pad2(dt.getMonth()+1)}-${pad2(dt.getDate())}`;
 }
 
 function renderAmountCell(amt) {
@@ -148,7 +162,7 @@ function loadCSV(csv_str, type) {
 
     if (type == 'AmEx')
       obj['Post Date'] = obj['Post Date'].split(' ')[0];
-    obj['Post Date'] = toISO(obj['Post Date']);
+    obj['Post Date'] = stringToISO(obj['Post Date']);
     
     if (type == 'AmEx')
       obj.Amount = -obj.Amount;
@@ -173,7 +187,7 @@ function sum(records, property) {
   return total;
 }
 
-function toISO(dt_str) {
+function stringToISO(dt_str) {
   var parts = dt_str.split('/');
   parts = parts.map(function(part) {
     return parseInt(part, 10);
