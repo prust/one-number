@@ -2,7 +2,7 @@
 	"dependencies": {
 		"async": "^3.2.0",
 		"comma-separated-values": "3.6.2",
-		"express": "4.17.1",
+		"express": "4.17.3",
 		"pg": "^8.2.1",
 		"underscore": "1.8.3"
 	}
